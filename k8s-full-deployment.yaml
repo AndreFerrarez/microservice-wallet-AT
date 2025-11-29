@@ -1,0 +1,125 @@
+# --- 1. BANCO DE DADOS (PostgreSQL) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wallet-db
+  template:
+    metadata:
+      labels:
+        app: wallet-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres"
+            - name: POSTGRES_DB
+              value: "walletdb"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-db-service
+spec:
+  selector:
+    app: wallet-db
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+
+---
+# --- 2. SERVIÇO DE COTAÇÃO (Provider) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quotation-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quotation-service
+  template:
+    metadata:
+      labels:
+        app: quotation-service
+    spec:
+      containers:
+        - name: quotation-service
+          image: crypto-quotation:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8081
+          env:
+            - name: SERVER_PORT  # Garante que a porta é 8081
+              value: "8081"
+            - name: SERVER_ADDRESS # O PULO DO GATO: Ouve em qualquer IP
+              value: "0.0.0.0"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: quotation-service-dns
+spec:
+  selector:
+    app: quotation-service
+  ports:
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081
+
+---
+# --- 3. SERVIÇO WALLET (Consumer) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wallet-service
+  template:
+    metadata:
+      labels:
+        app: wallet-service
+    spec:
+      containers:
+        - name: wallet-service
+          image: crypto-wallet:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            # Configuração do R2DBC (Aplicação)
+            - name: SPRING_R2DBC_URL
+              value: "r2dbc:postgresql://wallet-db-service:5432/walletdb"
+            # --- NOVA LINHA: Configuração do Flyway (Migração) ---
+            - name: SPRING_FLYWAY_URL
+              value: "jdbc:postgresql://wallet-db-service:5432/walletdb"
+            # -----------------------------------------------------
+            - name: QUOTATION_URL
+              value: "http://quotation-service-dns:8081"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-service-loadbalancer
+spec:
+  type: LoadBalancer
+  selector:
+    app: wallet-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
